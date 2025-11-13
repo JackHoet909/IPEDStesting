@@ -16,7 +16,18 @@ from sklearn.metrics import silhouette_score
 from sklearn.metrics import silhouette_samples
 
 
-
+def get_ranked_states_scaled(university_name, top_n):
+        if university_name not in scaled_df.index:
+            print(f"University '{university_name}' not found in the dataset.")
+            return None
+        # Get scaled state scores for the university
+        state_scores = scaled_df.loc[university_name]
+        ranked = state_scores.sort_values(ascending=False).head(top_n)
+        # Return a clean two-column DataFrame
+        return pd.DataFrame({
+            f"{university_name} State": ranked.index,
+            f"{university_name} Score": ranked.values
+        })
 
 
 
@@ -32,22 +43,29 @@ parser.add_argument("--rank", type=str, nargs = "+", help="rank states for a giv
 parser.add_argument("--silhouette", action="store_true", help="compute silhouette scores")
 parser.add_argument("--elbow", action="store_true", help="Run elbow method to help determine best cluster count")
 parser.add_argument("--c", type=int, default=62, help="Count of states in the ranking")
+parser.add_argument("--DropOhio", action="store_true", help="Drop Ohio column without normalizing the data")
+parser.add_argument("--NormAndDropOhio", action="store_true", help="Normalize the data and drop Ohio column")
 parser.add_argument("--linkage", type=str, default="ward", help="Linkage method for hierarchical clustering (ward, single, complete, average)")
 args = parser.parse_args() #Parse the arguments when used in the command line
 
 read_df = pd.read_csv(Path(args.CSVfile), encoding="latin1", index_col=0)
 #df = pd.get_dummies(read_df)  #perform one-hot encoding on categorical data (transforms strings into a binary set)
 
-
 read_df = read_df.dropna(subset=args.VariableName) #removes any rows that are missing important info
 read_df = read_df.fillna(0) #any missing information gets replaced with a 0
 
 
 columns = read_df[args.VariableName]
+if args.DropOhio: #Drop the column named "Ohio" if it exists
+    if "Ohio" in columns.columns:
+        columns = columns.drop(columns="Ohio")
+
 columns_percent = columns.div(columns.sum(axis=1), axis=0) #normalizes total size of each university by converting count to percent
+columns_percent = columns_percent.fillna(0)
 #Drop the column named "Ohio" if it exists
-#if "Ohio" in columns_percent.columns:
-    #columns_percent = columns_percent.drop(columns="Ohio")
+if args.NormAndDropOhio:
+    if "Ohio" in columns_percent.columns:
+        columns_percent = columns_percent.drop(columns="Ohio")
 scaler = StandardScaler()
 scaler.fit(columns_percent)
 columns_Scaled = scaler.transform(columns_percent)
@@ -79,24 +97,17 @@ if args.elbow:
     plt.title("Elbow Method to Determine Optimal Clusters")
     plt.show()
 
-elif args.rank:
-    def get_ranked_states_scaled(university_name, top_n):
-        if university_name not in scaled_df.index:
-            print(f"University '{university_name}' not found in the dataset.")
-            return None
-        # Get scaled state scores for the university
-        state_scores = scaled_df.loc[university_name]
-        ranked = state_scores.sort_values(ascending=False).head(top_n)
-        # Return a clean two-column DataFrame
-        return pd.DataFrame({
-            f"{university_name} State": ranked.index,
-            f"{university_name} Score": ranked.values
-        })
+elif args.rank: 
 
-    # Collect rankings for each university
+    #Initialize a list to hold ranked DataFrames for each university
     ranked_frames = []
+    
+    #Loop through each university name provided in the command-line arguments
     for name in args.rank:
+        #Get the ranked states for this university
         df = get_ranked_states_scaled(name, args.c)
+        
+        #If the result is valid, reset index and add to the list
         if df is not None:
             ranked_frames.append(df.reset_index(drop=True))
 
@@ -106,7 +117,7 @@ elif args.rank:
         # Save to Excel
         combined_df.to_excel(args.output, index=False, engine="openpyxl")
     print(combined_df)
-
+    #python titanicTest.py VariableNames --rank "University A" "University B" "etc" --c 1-62
     
 
 elif args.pairwise:
@@ -120,8 +131,7 @@ elif args.hierarchical:
     linked = linkage(columns_Scaled, method=args.linkage)
 
     #Create figure
-    plt.figure(figsize=(10, 7))
-
+    fig, ax = plt.subplots(figsize=(10, 7))
     #Plot dendrogram
     dendrogram(
         linked,
@@ -131,7 +141,6 @@ elif args.hierarchical:
         show_leaf_counts=True               # show sample count
     )
     
-    ax = plt.gca() #Get current axes
     x_tick_labels = ax.get_xticklabels() #Get the x-axis tick labels
 
     highlight_universities = pd.read_csv(Path(args.UniNameFile), header=None)[0].values #Read the list of universities to highlight
@@ -140,6 +149,20 @@ elif args.hierarchical:
         if label_obj.get_text() in highlight_universities: #If the label is in the list of universities to highlight
             label_obj.set_color('red')
             label_obj.set_fontweight('bold') #Make it bolded red
+
+
+    # Define what happens when you click
+    def on_click(event):
+        for label_obj in x_tick_labels:
+            if label_obj.contains(event)[0]:
+                clicked_name = label_obj.get_text()
+                print(f"You clicked on: {clicked_name}")
+                ranked_df = get_ranked_states_scaled(clicked_name, top_n=5)
+                if ranked_df is not None:
+                    print(ranked_df.to_string(index=False))
+
+# Connect the click event
+    fig.canvas.mpl_connect('button_press_event', on_click)
 
     plt.style.use('bmh')
     # Title and axis labels
